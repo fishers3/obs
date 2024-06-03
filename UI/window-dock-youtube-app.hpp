@@ -17,7 +17,6 @@ public:
 
 	void AccountConnected();
 	void AccountDisconnected();
-	void SettingsUpdated(bool cleanup = false);
 	void Update();
 
 	void BroadcastCreated(const char *stream_id);
@@ -28,6 +27,9 @@ public:
 	static bool IsYTServiceSelected();
 	static YoutubeApiWrappers *GetYTApi();
 	static void CleanupYouTubeUrls();
+
+public slots:
+	void SettingsUpdated(bool cleanup = false);
 
 protected:
 	void IngestionStarted(const char *stream_id, streaming_mode_t mode);
