@@ -229,24 +229,6 @@
         return NO;
     }
 
-    if (@available(macOS 12.0, *)) {
-        if (device.portraitEffectActive) {
-            [self AVCaptureLog:LOG_WARNING withFormat:@"Portrait effect is active on selected device"];
-        }
-    }
-
-    if (@available(macOS 12.3, *)) {
-        if (device.centerStageActive) {
-            [self AVCaptureLog:LOG_WARNING withFormat:@"Center Stage effect is active on selected device"];
-        }
-    }
-
-    if (@available(macOS 13.0, *)) {
-        if (device.studioLightActive) {
-            [self AVCaptureLog:LOG_WARNING withFormat:@"Studio Light effect is active on selected device"];
-        }
-    }
-
     [self.session beginConfiguration];
 
     if ([self.session canAddInput:deviceInput]) {
@@ -432,40 +414,13 @@
     int colorSpace;
     FourCharCode inputFourCC;
 
-    if (!self.isFastPath) {
-        videoRange = (int) obs_data_get_int(self.captureInfo->settings, "video_range");
+    int inputFormat;
+    CMFormatDescriptionRef formatDescription = self.deviceInput.device.activeFormat.formatDescription;
+    inputFormat = (int) obs_data_get_int(self.captureInfo->settings, "input_format");
+    inputFourCC = [OBSAVCapture fourCharCodeFromFormat:inputFormat withRange:VIDEO_RANGE_DEFAULT];
 
-        if (![OBSAVCapture isValidVideoRange:videoRange]) {
-            [self AVCaptureLog:LOG_WARNING withFormat:@"Unsupported video range: %d", videoRange];
-            return NO;
-        }
-
-        int inputFormat;
-        inputFormat = (int) obs_data_get_int(self.captureInfo->settings, "input_format");
-        inputFourCC = [OBSAVCapture fourCharCodeFromFormat:inputFormat withRange:videoRange];
-
-        colorSpace = (int) obs_data_get_int(self.captureInfo->settings, "color_space");
-
-        if (![OBSAVCapture isValidColorspace:colorSpace]) {
-            [self AVCaptureLog:LOG_DEBUG withFormat:@"Unsupported color space: %d", colorSpace];
-            return NO;
-        }
-    } else {
-        int inputFormat;
-        CMFormatDescriptionRef formatDescription = self.deviceInput.device.activeFormat.formatDescription;
-        inputFormat = (int) obs_data_get_int(self.captureInfo->settings, "input_format");
-        inputFourCC = [OBSAVCapture fourCharCodeFromFormat:inputFormat withRange:VIDEO_RANGE_DEFAULT];
-
-        colorSpace = [OBSAVCapture colorspaceFromDescription:formatDescription];
-        videoRange = ([OBSAVCapture isFullRangeFormat:inputFourCC]) ? VIDEO_RANGE_FULL : VIDEO_RANGE_PARTIAL;
-    }
-
-    CMVideoDimensions dimensions = [OBSAVCapture dimensionsFromSettings:self.captureInfo->settings];
-
-    if (dimensions.width == 0 || dimensions.height == 0) {
-        [self AVCaptureLog:LOG_DEBUG withFormat:@"No valid resolution found in settings"];
-        return NO;
-    }
+    colorSpace = [OBSAVCapture colorspaceFromDescription:formatDescription];
+    videoRange = ([OBSAVCapture isFullRangeFormat:inputFourCC]) ? VIDEO_RANGE_FULL : VIDEO_RANGE_PARTIAL;
 
     struct media_frames_per_second fps;
     if (!obs_data_get_frames_per_second(self.captureInfo->settings, "frame_rate", &fps, NULL)) {
@@ -477,32 +432,28 @@
 
     AVCaptureDeviceFormat *format = nil;
 
+    const char *selectedFormat = obs_data_get_string(self.captureInfo->settings, "supported_format");
+    NSString *selectedFormatNSString = [NSString stringWithCString:selectedFormat encoding:NSUTF8StringEncoding];
+
     for (AVCaptureDeviceFormat *formatCandidate in [self.deviceInput.device.formats reverseObjectEnumerator]) {
-        CMVideoDimensions formatDimensions = CMVideoFormatDescriptionGetDimensions(formatCandidate.formatDescription);
-
-        if (!(formatDimensions.width == dimensions.width) || !(formatDimensions.height == dimensions.height)) {
-            continue;
+        if ([selectedFormatNSString isEqualToString:[OBSAVCapture descriptionFromFormat:formatCandidate]]) {
+            FourCharCode formatFourCC = CMFormatDescriptionGetMediaSubType(formatCandidate.formatDescription);
+            format = formatCandidate;
+            inputFourCC = formatFourCC;
         }
-
-        for (AVFrameRateRange *range in formatCandidate.videoSupportedFrameRateRanges) {
-            if (CMTimeCompare(range.maxFrameDuration, time) >= 0 && CMTimeCompare(range.minFrameDuration, time) <= 0) {
-                CMFormatDescriptionRef formatDescription = formatCandidate.formatDescription;
-                FourCharCode formatFourCC = CMFormatDescriptionGetMediaSubType(formatDescription);
-
-                if (inputFourCC == formatFourCC) {
-                    format = formatCandidate;
-                    inputFourCC = formatFourCC;
-                    break;
-                }
-            }
-        }
-
         if (format) {
             break;
         }
     }
 
-    if (!format) {
+    bool fpsSupported = false;
+    for (AVFrameRateRange *range in format.videoSupportedFrameRateRanges) {
+        if (CMTimeCompare(range.maxFrameDuration, time) >= 0 && CMTimeCompare(range.minFrameDuration, time) <= 0) {
+            fpsSupported = true;
+        }
+    }
+
+    if (!fpsSupported) {
         [self AVCaptureLog:LOG_WARNING withFormat:@"Frame rate is not supported: %g FPS (%u/%u)",
                                                   media_frames_per_second_to_fps(fps), fps.numerator, fps.denominator];
         return NO;
@@ -513,9 +464,11 @@
     self.isDeviceLocked = [self.deviceInput.device lockForConfiguration:error];
 
     if (!self.isDeviceLocked) {
-        [self AVCaptureLog:LOG_WARNING withFormat:@"Could not lock devie for configuration"];
+        [self AVCaptureLog:LOG_WARNING withFormat:@"Could not lock device for configuration"];
         return NO;
     }
+
+    CMVideoDimensions dimensions = CMVideoFormatDescriptionGetDimensions(formatDescription);
 
     [self AVCaptureLog:LOG_INFO
             withFormat:@"Capturing '%@' (%@):\n"
@@ -537,6 +490,8 @@
                                      .isValid = false};
 
     self.videoInfo = newInfo;
+    self.captureInfo->configuredColorSpace = colorSpace;
+    self.captureInfo->configuredVideoRange = videoRange;
 
     self.isPresetBased = NO;
 
@@ -649,33 +604,6 @@
 
 #pragma mark - OBS Settings Helpers
 
-+ (CMVideoDimensions)dimensionsFromSettings:(void *)settings
-{
-    CMVideoDimensions zero = {0};
-
-    NSString *jsonString = [OBSAVCapture stringFromSettings:settings withSetting:@"resolution"];
-
-    NSDictionary *data = [NSJSONSerialization JSONObjectWithData:[jsonString dataUsingEncoding:NSUTF8StringEncoding]
-                                                         options:0
-                                                           error:nil];
-
-    if (data.count == 0) {
-        return zero;
-    }
-
-    NSInteger width = [[data objectForKey:@"width"] intValue];
-    NSInteger height = [[data objectForKey:@"height"] intValue];
-
-    if (!width || !height) {
-        return zero;
-    }
-
-    CMVideoDimensions dimensions = {.width = (int32_t) clamp_Uint(width, 0, UINT32_MAX),
-                                    .height = (int32_t) clamp_Uint(height, 0, UINT32_MAX)};
-
-    return dimensions;
-}
-
 + (NSString *)stringFromSettings:(void *)settings withSetting:(NSString *)setting
 {
     return [OBSAVCapture stringFromSettings:settings withSetting:setting withDefault:@""];
@@ -700,21 +628,67 @@
     return result;
 }
 
++ (const char *)effectsWarningForDevice:(AVCaptureDevice *)device
+{
+    int effectsCount = 0;
+    const char *effectWarning = "";
+    if (@available(macOS 12.0, *)) {
+        if (device.portraitEffectActive) {
+            effectWarning = obs_module_text("PortraitEffectWarning");
+            effectsCount++;
+        }
+    }
+    if (@available(macOS 12.3, *)) {
+        if (device.centerStageActive) {
+            effectWarning = obs_module_text("CenterStageWarning");
+            effectsCount++;
+        }
+    }
+    if (@available(macOS 13.0, *)) {
+        if (device.studioLightActive) {
+            effectWarning = obs_module_text("StudioLightWarning");
+            effectsCount++;
+        }
+    }
+    /* This property is currently unavailable due to an SDK issue: FB13948132
+    if (@available(macOS 14.0, *)) {
+        if (device.reactionEffectGesturesEnabled) {
+            effectWarning = obs_module_text("ReactionsWarning");
+            effectsCount++;
+        }
+    }
+    */
+    /* Not available until we are building on Xcode 16. Is there a way to check SDK availability?
+    if (@available(macOS 15.0, *)) {
+        if (device.backgroundReplacementActive) {
+            effectWarning = obs_module_text("BackgroundReplacementWarning");
+            effectsCount++;
+        }
+    }
+     */
+    if (effectsCount > 1) {
+        effectWarning = obs_module_text("MultipleEffectsWarning");
+    }
+    return effectWarning;
+}
+
 #pragma mark - Format Conversion Helpers
 
 + (NSString *)stringFromSubType:(FourCharCode)subtype
 {
     switch (subtype) {
         case kCVPixelFormatType_422YpCbCr8:
-            return @"UYVY - 422YpCbCr8";
+            return @"UYVY (2vuy)";
         case kCVPixelFormatType_422YpCbCr8_yuvs:
-            return @"YUY2 - 422YpCbCr8_yuvs";
+            return @"YUY2 (yuvs)";
         case kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange:
+            return @"NV12 (420v)";
         case kCVPixelFormatType_420YpCbCr8BiPlanarFullRange:
-            return @"NV12 - 420YpCbCr8BiPlanar";
+            return @"NV12 (420f)";
         case kCVPixelFormatType_420YpCbCr10BiPlanarFullRange:
+            return @"P010 (xf20)";
         case kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange:
-            return @"P010 - 420YpCbCr10BiPlanar";
+            return @"P010 (x420)";
         case kCVPixelFormatType_32ARGB:
             return @"ARGB - 32ARGB";
         case kCVPixelFormatType_32BGRA:
@@ -944,6 +918,39 @@
 + (FourCharCode)fourCharCodeFromFormat:(OBSAVCaptureVideoFormat)format
 {
     return [OBSAVCapture fourCharCodeFromFormat:format withRange:VIDEO_RANGE_PARTIAL];
+}
+
++ (NSString *)frameRateDescription:(NSArray<AVFrameRateRange *> *)ranges
+{
+    NSString *frameRateDescription = @"";
+    uint32_t index = 0;
+    for (AVFrameRateRange *range in ranges) {
+        if (range.minFrameRate == range.maxFrameRate) {
+            frameRateDescription = [frameRateDescription stringByAppendingFormat:@"%.2f", range.minFrameRate];
+        } else {
+            frameRateDescription =
+                [frameRateDescription stringByAppendingFormat:@"%.2f-%.2f", range.minFrameRate, range.maxFrameRate];
+        }
+        index++;
+        if (index < (ranges.count - 1)) {
+            frameRateDescription = [frameRateDescription stringByAppendingString:@", "];
+        }
+    }
+    return [frameRateDescription stringByAppendingString:@" fps"];
+}
+
++ (NSString *)descriptionFromFormat:(AVCaptureDeviceFormat *)format
+{
+    CMVideoDimensions formatDimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription);
+    FourCharCode formatSubType = CMFormatDescriptionGetMediaSubType(format.formatDescription);
+    NSString *pixelFormatDescription = [OBSAVCapture stringFromSubType:formatSubType];
+    OBSAVCaptureColorSpace deviceColorSpace = [OBSAVCapture colorspaceFromDescription:format.formatDescription];
+    NSString *colorspaceDescription = [OBSAVCapture stringFromColorspace:deviceColorSpace];
+    NSString *fpsRangesDescription = [OBSAVCapture frameRateDescription:format.videoSupportedFrameRateRanges];
+    NSString *formatDescription = [NSString stringWithFormat:@"%dx%d - %@ - %@ - %@", formatDimensions.width,
+                                                             formatDimensions.height, fpsRangesDescription,
+                                                             colorspaceDescription, pixelFormatDescription];
+    return formatDescription;
 }
 
 + (OBSAVCaptureColorSpace)colorspaceFromDescription:(CMFormatDescriptionRef)description
@@ -1199,7 +1206,7 @@
 
                         BOOL isColorSpaceMatching = NO;
 
-                        SInt64 configuredColorSpace = obs_data_get_int(_captureInfo->settings, "color_space");
+                        SInt64 configuredColorSpace = _captureInfo->configuredColorSpace;
 
                         if (usePreset) {
                             isColorSpaceMatching = sampleBufferColorSpace == _videoInfo.colorSpace;
@@ -1208,7 +1215,7 @@
                         }
 
                         BOOL isVideoRangeMatching = NO;
-                        SInt64 configuredVideoRangeType = obs_data_get_int(_captureInfo->settings, "video_range");
+                        SInt64 configuredVideoRangeType = _captureInfo->configuredVideoRange;
 
                         if (usePreset) {
                             isVideoRangeMatching = sampleBufferRangeType == _videoInfo.videoRange;
