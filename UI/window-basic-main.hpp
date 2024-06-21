@@ -242,6 +242,7 @@ private:
 	long disableSaving = 1;
 	bool projectChanged = false;
 	bool previewEnabled = true;
+	bool previewEnabledWhileFocused = true;
 	ContextBarSize contextBarSize = ContextBarSize_Normal;
 
 	std::deque<SourceCopyInfo> clipboard;
@@ -1256,6 +1257,7 @@ public slots:
 	void UpdateContextBar(bool force = false);
 	void UpdateContextBarDeferred(bool force = false);
 	void UpdateContextBarVisibility();
+	void TogglePreviewForWindowFocus(bool hasFocus);
 
 signals:
 	/* Streaming signals */
