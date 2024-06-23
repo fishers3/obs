@@ -15,7 +15,6 @@
 #import <obs.h>
 #import <pthread.h>
 #import <media-io/video-io.h>
-#import <obs-module.h>
 
 #pragma mark - Type aliases and type definitions
 
@@ -163,10 +162,10 @@ typedef struct av_capture_info {
 /// - Returns: New [NSString](https://developer.apple.com/documentation/foundation/nsstring?language=objc) instance created from user setting if setting represented a valid C character pointer.
 + (NSString *)stringFromSettings:(void *)settings withSetting:(NSString *)setting withDefault:(NSString *)defaultValue;
 
-/// Generates a localized warning C string for display in the properties window concerning macOS system effects that are active on a particular `AVCaptureDevice`.
+/// Generates an NSString representing the name of the warning to display in the properties window for macOS system effects that are active on a particular `AVCaptureDevice`.
 /// - Parameter device: The [AVCaptureDevice](https://developer.apple.com/documentation/avfoundation/avcapturedevice?language=objc) to generate an effects warning string for.
-/// - Returns: C string containing the localized warning to display to the user.
-+ (const char *)effectsWarningForDevice:(AVCaptureDevice *)device;
+/// - Returns: `nil` if there are no effects active on the device. If effects are found, returns a new [NSString](https://developer.apple.com/documentation/foundation/nsstring?language=objc) instance containing the `libobs` key used to retrieve the appropriate localized warning string.
++ (NSString *)effectsWarningForDevice:(AVCaptureDevice *)device;
 
 #pragma mark - Format Conversion Helpers
 
@@ -352,35 +351,35 @@ typedef struct av_capture_info {
 
 /// Compare two `AVCaptureDeviceFormat`s for purposes of sorting in the properties window.
 static NSComparator const OBSAVCaptureDeviceFormatCompare =
-    ^NSComparisonResult(AVCaptureDeviceFormat *a, AVCaptureDeviceFormat *b) {
-        CMVideoDimensions aDimensions = CMVideoFormatDescriptionGetDimensions(a.formatDescription);
-        CMVideoDimensions bDimensions = CMVideoFormatDescriptionGetDimensions(b.formatDescription);
-        NSNumber *aWidth = @(aDimensions.width);
-        NSNumber *bWidth = @(bDimensions.width);
-        NSNumber *aHeight = @(aDimensions.height);
-        NSNumber *bHeight = @(bDimensions.height);
-        NSNumber *aArea = @(aDimensions.width * aDimensions.height);
-        NSNumber *bArea = @(bDimensions.width * bDimensions.height);
-        NSNumber *aMaxFrameRate = @(a.videoSupportedFrameRateRanges.firstObject.maxFrameRate);
-        NSNumber *bMaxFrameRate = @(b.videoSupportedFrameRateRanges.firstObject.maxFrameRate);
-        NSNumber *aFourCC = @(CMFormatDescriptionGetMediaSubType(a.formatDescription));
-        NSNumber *bFourCC = @(CMFormatDescriptionGetMediaSubType(b.formatDescription));
-        NSNumber *aColorSpace = @([OBSAVCapture colorspaceFromDescription:a.formatDescription]);
-        NSNumber *bColorSpace = @([OBSAVCapture colorspaceFromDescription:b.formatDescription]);
+    ^NSComparisonResult(AVCaptureDeviceFormat *lhs, AVCaptureDeviceFormat *rhs) {
+        CMVideoDimensions lhsDimensions = CMVideoFormatDescriptionGetDimensions(lhs.formatDescription);
+        CMVideoDimensions rhsDimensions = CMVideoFormatDescriptionGetDimensions(rhs.formatDescription);
+        NSNumber *lhsWidth = @(lhsDimensions.width);
+        NSNumber *rhsWidth = @(rhsDimensions.width);
+        NSNumber *lhsHeight = @(lhsDimensions.height);
+        NSNumber *rhsHeight = @(rhsDimensions.height);
+        NSNumber *lhsArea = @(lhsDimensions.width * lhsDimensions.height);
+        NSNumber *rhsArea = @(rhsDimensions.width * rhsDimensions.height);
+        NSNumber *lhsMaxFrameRate = @(lhs.videoSupportedFrameRateRanges.firstObject.maxFrameRate);
+        NSNumber *rhsMaxFrameRate = @(rhs.videoSupportedFrameRateRanges.firstObject.maxFrameRate);
+        NSNumber *lhsFourCC = @(CMFormatDescriptionGetMediaSubType(lhs.formatDescription));
+        NSNumber *rhsFourCC = @(CMFormatDescriptionGetMediaSubType(rhs.formatDescription));
+        NSNumber *lhsColorSpace = @([OBSAVCapture colorspaceFromDescription:lhs.formatDescription]);
+        NSNumber *rhsColorSpace = @([OBSAVCapture colorspaceFromDescription:rhs.formatDescription]);
 
         NSComparisonResult result;
 
-        result = [aWidth compare:bWidth];
+        result = [lhsWidth compare:rhsWidth];
         if (result == NSOrderedSame) {
-            result = [aArea compare:bArea];
+            result = [lhsArea compare:rhsArea];
             if (result == NSOrderedSame) {
-                result = [aHeight compare:bHeight];
+                result = [lhsHeight compare:rhsHeight];
                 if (result == NSOrderedSame) {
-                    result = [aMaxFrameRate compare:bMaxFrameRate];
+                    result = [lhsMaxFrameRate compare:rhsMaxFrameRate];
                     if (result == NSOrderedSame) {
-                        result = [aFourCC compare:bFourCC];
+                        result = [lhsFourCC compare:rhsFourCC];
                         if (result == NSOrderedSame) {
-                            result = [aColorSpace compare:bColorSpace];
+                            result = [lhsColorSpace compare:rhsColorSpace];
                         }
                     }
                 }

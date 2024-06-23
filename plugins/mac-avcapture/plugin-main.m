@@ -80,23 +80,30 @@ static obs_properties_t *av_capture_properties(void *av_capture)
     OBSAVCapture *capture = (__bridge OBSAVCapture *) (av_capture);
     OBSAVCaptureInfo *capture_info = capture.captureInfo;
     AVCaptureDevice *device = capture.deviceInput.device;
-    const char *effects_warning_string = [OBSAVCapture effectsWarningForDevice:device];
-    bool has_effects = effects_warning_string[0] != '\0';
+    NSString *effectsWarningKey = [OBSAVCapture effectsWarningForDevice:device];
+    bool has_effects = effectsWarningKey != nil;
+    const char *effects_warning_string;
+    if (has_effects) {
+        effects_warning_string = obs_module_text(effectsWarningKey.UTF8String);
+    }
 
     obs_properties_t *properties = obs_properties_create();
 
     // Create Properties
     obs_property_t *device_list = obs_properties_add_list(properties, "device", obs_module_text("Device"),
                                                           OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
-    obs_property_t *effects_warning =
-        obs_properties_add_text(properties, "effects_warning", effects_warning_string, OBS_TEXT_INFO);
-    obs_property_text_set_info_type(effects_warning, OBS_TEXT_INFO_WARNING);
+
+    obs_property_t *effects_warning;
+    if (has_effects) {
+        effects_warning = obs_properties_add_text(properties, "effects_warning", effects_warning_string, OBS_TEXT_INFO);
+        obs_property_text_set_info_type(effects_warning, OBS_TEXT_INFO_WARNING);
+    }
 
     obs_property_t *use_preset = obs_properties_add_bool(properties, "use_preset", obs_module_text("UsePreset"));
     obs_property_t *preset_list = obs_properties_add_list(properties, "preset", obs_module_text("Preset"),
                                                           OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
-    obs_property_t *supported_formats =
-        obs_properties_add_list(properties, "supported_format", "Format", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
+    obs_property_t *supported_formats = obs_properties_add_list(
+        properties, "supported_format", obs_module_text("InputFormat"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
     obs_property_t *use_buffering = obs_properties_add_bool(properties, "buffering", obs_module_text("Buffering"));
     obs_property_t *frame_rates = obs_properties_add_frame_rate(properties, "frame_rate", obs_module_text("FrameRate"));
 
@@ -105,8 +112,9 @@ static obs_properties_t *av_capture_properties(void *av_capture)
 
         // Add Property Visibility and Callbacks
         configure_property(device_list, true, true, properties_changed, capture);
-        //todo fix
-        configure_property(effects_warning, true, has_effects, NULL, NULL);
+        if (has_effects) {
+            configure_property(effects_warning, true, has_effects, NULL, NULL);
+        }
 
         configure_property(use_preset, !isFastPath, !isFastPath, (!isFastPath) ? properties_changed_use_preset : NULL,
                            capture);

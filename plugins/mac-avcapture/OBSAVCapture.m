@@ -628,46 +628,46 @@
     return result;
 }
 
-+ (const char *)effectsWarningForDevice:(AVCaptureDevice *)device
++ (NSString *)effectsWarningForDevice:(AVCaptureDevice *)device
 {
     int effectsCount = 0;
-    const char *effectWarning = "";
+    NSString *effectWarning = nil;
     if (@available(macOS 12.0, *)) {
         if (device.portraitEffectActive) {
-            effectWarning = obs_module_text("PortraitEffectWarning");
+            effectWarning = @"PortraitEffectWarning";
             effectsCount++;
         }
     }
     if (@available(macOS 12.3, *)) {
         if (device.centerStageActive) {
-            effectWarning = obs_module_text("CenterStageWarning");
+            effectWarning = @"CenterStageWarning";
             effectsCount++;
         }
     }
     if (@available(macOS 13.0, *)) {
         if (device.studioLightActive) {
-            effectWarning = obs_module_text("StudioLightWarning");
+            effectWarning = @"StudioLightWarning";
             effectsCount++;
         }
     }
     /* This property is currently unavailable due to an SDK issue: FB13948132
     if (@available(macOS 14.0, *)) {
         if (device.reactionEffectGesturesEnabled) {
-            effectWarning = obs_module_text("ReactionsWarning");
+            effectWarning = @"ReactionsWarning";
             effectsCount++;
         }
     }
     */
-    /* Not available until we are building on Xcode 16. Is there a way to check SDK availability?
+#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 150000
     if (@available(macOS 15.0, *)) {
         if (device.backgroundReplacementActive) {
-            effectWarning = obs_module_text("BackgroundReplacementWarning");
+            effectWarning = @"BackgroundReplacementWarning";
             effectsCount++;
         }
     }
-     */
+#endif
     if (effectsCount > 1) {
-        effectWarning = obs_module_text("MultipleEffectsWarning");
+        effectWarning = @"MultipleEffectsWarning";
     }
     return effectWarning;
 }
