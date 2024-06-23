@@ -634,26 +634,26 @@
     NSString *effectWarning = nil;
     if (@available(macOS 12.0, *)) {
         if (device.portraitEffectActive) {
-            effectWarning = @"PortraitEffectWarning";
+            effectWarning = @"Warning.Effect.Portrait";
             effectsCount++;
         }
     }
     if (@available(macOS 12.3, *)) {
         if (device.centerStageActive) {
-            effectWarning = @"CenterStageWarning";
+            effectWarning = @"Warning.Effect.CenterStage";
             effectsCount++;
         }
     }
     if (@available(macOS 13.0, *)) {
         if (device.studioLightActive) {
-            effectWarning = @"StudioLightWarning";
+            effectWarning = @"Warning.Effect.StudioLight";
             effectsCount++;
         }
     }
     /* This property is currently unavailable due to an SDK issue: FB13948132
     if (@available(macOS 14.0, *)) {
         if (device.reactionEffectGesturesEnabled) {
-            effectWarning = @"ReactionsWarning";
+            effectWarning = @"Warning.Effect.Reactions";
             effectsCount++;
         }
     }
@@ -661,13 +661,13 @@
 #if __MAC_OS_X_VERSION_MAX_ALLOWED >= 150000
     if (@available(macOS 15.0, *)) {
         if (device.backgroundReplacementActive) {
-            effectWarning = @"BackgroundReplacementWarning";
+            effectWarning = @"Warning.Effect.BackgroundReplacement";
             effectsCount++;
         }
     }
 #endif
     if (effectsCount > 1) {
-        effectWarning = @"MultipleEffectsWarning";
+        effectWarning = @"Warning.Effect.Multiple";
     }
     return effectWarning;
 }
