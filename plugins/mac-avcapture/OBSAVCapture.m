@@ -410,18 +410,7 @@
 
 - (BOOL)configureSession:(NSError *__autoreleasing *)error
 {
-    int videoRange;
-    int colorSpace;
-    FourCharCode inputFourCC;
-
-    int inputFormat;
-    CMFormatDescriptionRef formatDescription = self.deviceInput.device.activeFormat.formatDescription;
-    inputFormat = (int) obs_data_get_int(self.captureInfo->settings, "input_format");
-    inputFourCC = [OBSAVCapture fourCharCodeFromFormat:inputFormat withRange:VIDEO_RANGE_DEFAULT];
-
-    colorSpace = [OBSAVCapture colorspaceFromDescription:formatDescription];
-    videoRange = ([OBSAVCapture isFullRangeFormat:inputFourCC]) ? VIDEO_RANGE_FULL : VIDEO_RANGE_PARTIAL;
-
+    //todo: see if we need to handle 'migration' from old settings here (or else in plugin-properties)
     struct media_frames_per_second fps;
     if (!obs_data_get_frames_per_second(self.captureInfo->settings, "frame_rate", &fps, NULL)) {
         [self AVCaptureLog:LOG_DEBUG withFormat:@"No valid framerate found in settings"];
@@ -430,23 +419,32 @@
 
     CMTime time = {.value = fps.denominator, .timescale = fps.numerator, .flags = 1};
 
-    AVCaptureDeviceFormat *format = nil;
-
     const char *selectedFormat = obs_data_get_string(self.captureInfo->settings, "supported_format");
     NSString *selectedFormatNSString = [NSString stringWithCString:selectedFormat encoding:NSUTF8StringEncoding];
 
+    AVCaptureDeviceFormat *format = nil;
+    FourCharCode subtype;
+    OBSAVCaptureColorSpace colorSpace;
+    bool fpsSupported = false;
+
     for (AVCaptureDeviceFormat *formatCandidate in [self.deviceInput.device.formats reverseObjectEnumerator]) {
         if ([selectedFormatNSString isEqualToString:[OBSAVCapture descriptionFromFormat:formatCandidate]]) {
-            FourCharCode formatFourCC = CMFormatDescriptionGetMediaSubType(formatCandidate.formatDescription);
+            CMFormatDescriptionRef formatDescription = formatCandidate.formatDescription;
+            FourCharCode formatFourCC = CMFormatDescriptionGetMediaSubType(formatDescription);
             format = formatCandidate;
-            inputFourCC = formatFourCC;
+            subtype = formatFourCC;
+            colorSpace = [OBSAVCapture colorspaceFromDescription:formatDescription];
         }
         if (format) {
             break;
         }
     }
 
-    bool fpsSupported = false;
+    if (!format) {
+        [self AVCaptureLog:LOG_WARNING withFormat:@"Selected format '%@' not found on device", selectedFormatNSString];
+        return NO;
+    }
+
     for (AVFrameRateRange *range in format.videoSupportedFrameRateRanges) {
         if (CMTimeCompare(range.maxFrameDuration, time) >= 0 && CMTimeCompare(range.minFrameDuration, time) <= 0) {
             fpsSupported = true;
@@ -468,30 +466,21 @@
         return NO;
     }
 
-    CMVideoDimensions dimensions = CMVideoFormatDescriptionGetDimensions(formatDescription);
-
-    [self AVCaptureLog:LOG_INFO
-            withFormat:@"Capturing '%@' (%@):\n"
-                        " Resolution            : %ux%u\n"
-                        " FPS                   : %g (%u/%u)\n"
-                        " Frame Interval        : %g\u00a0s\n"
-                        " Input Format          : %@\n"
-                        " Requested Color Space : %@ (%d)\n"
-                        " Requested Video Range : %@ (%d)\n"
-                        " Using Format          : %@",
-                       self.deviceInput.device.localizedName, self.deviceInput.device.uniqueID, dimensions.width,
-                       dimensions.height, media_frames_per_second_to_fps(fps), fps.numerator, fps.denominator,
-                       media_frames_per_second_to_frame_interval(fps), [OBSAVCapture stringFromSubType:inputFourCC],
-                       [OBSAVCapture stringFromColorspace:colorSpace], colorSpace,
-                       [OBSAVCapture stringFromVideoRange:videoRange], videoRange, format.description];
+    [self AVCaptureLog:LOG_INFO withFormat:@"Capturing '%@' (%@):\n"
+                                            " Using Format          : %@"
+                                            " FPS                   : %g (%u/%u)\n"
+                                            " Frame Interval        : %g\u00a0s\n",
+                                           self.deviceInput.device.localizedName, self.deviceInput.device.uniqueID,
+                                           selectedFormatNSString, media_frames_per_second_to_fps(fps), fps.numerator,
+                                           fps.denominator, media_frames_per_second_to_frame_interval(fps)];
 
     OBSAVCaptureVideoInfo newInfo = {.colorSpace = _videoInfo.colorSpace,
-                                     .videoRange = _videoInfo.videoRange,
+                                     .fourCC = _videoInfo.fourCC,
                                      .isValid = false};
 
     self.videoInfo = newInfo;
     self.captureInfo->configuredColorSpace = colorSpace;
-    self.captureInfo->configuredVideoRange = videoRange;
+    self.captureInfo->configuredFourCC = subtype;
 
     self.isPresetBased = NO;
 
@@ -650,14 +639,17 @@
             effectsCount++;
         }
     }
-    /* This property is currently unavailable due to an SDK issue: FB13948132
     if (@available(macOS 14.0, *)) {
-        if (device.reactionEffectGesturesEnabled) {
+        /// For some reason, `reactionEffectGesturesEnabled` is a class property rather than an instance property.
+        /// In truth, all of these may as well be class properties, since, as of macOS 15, toggling an effect for one device toggles
+        /// that effect for all devices in the same application. Yet it still seems appropriate to deliver these warnings on a
+        /// per-device basis. We are in the source properties window, where a user will be interested in what effects are active
+        /// for this specific device.
+        if (AVCaptureDevice.reactionEffectGesturesEnabled) {
             effectWarning = @"Warning.Effect.Reactions";
             effectsCount++;
         }
     }
-    */
 #if __MAC_OS_X_VERSION_MAX_ALLOWED >= 150000
     if (@available(macOS 15.0, *)) {
         if (device.backgroundReplacementActive) {
@@ -1111,7 +1103,7 @@
             CVImageBufferRef imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
             FourCharCode mediaSubType = CMFormatDescriptionGetMediaSubType(description);
 
-            OBSAVCaptureVideoInfo newInfo = {.videoRange = _videoInfo.videoRange,
+            OBSAVCaptureVideoInfo newInfo = {.fourCC = _videoInfo.fourCC,
                                              .colorSpace = _videoInfo.colorSpace,
                                              .isValid = false};
 
@@ -1203,7 +1195,6 @@
                             [OBSAVCapture colorspaceFromDescription:description];
                         OBSAVCaptureVideoRange sampleBufferRangeType = isSampleBufferFullRange ? VIDEO_RANGE_FULL
                                                                                                : VIDEO_RANGE_PARTIAL;
-
                         BOOL isColorSpaceMatching = NO;
 
                         SInt64 configuredColorSpace = _captureInfo->configuredColorSpace;
@@ -1214,17 +1205,16 @@
                             isColorSpaceMatching = configuredColorSpace == _videoInfo.colorSpace;
                         }
 
-                        BOOL isVideoRangeMatching = NO;
-                        SInt64 configuredVideoRangeType = _captureInfo->configuredVideoRange;
+                        BOOL isFourCCMatching = NO;
+                        SInt64 configuredFourCC = _captureInfo->configuredFourCC;
 
                         if (usePreset) {
-                            isVideoRangeMatching = sampleBufferRangeType == _videoInfo.videoRange;
+                            isFourCCMatching = mediaSubType == _videoInfo.fourCC;
                         } else {
-                            isVideoRangeMatching = configuredVideoRangeType == _videoInfo.videoRange;
-                            isSampleBufferFullRange = configuredVideoRangeType == VIDEO_RANGE_FULL;
+                            isFourCCMatching = configuredFourCC == _videoInfo.fourCC;
                         }
 
-                        if (isColorSpaceMatching && isVideoRangeMatching) {
+                        if (isColorSpaceMatching && isFourCCMatching) {
                             newInfo.isValid = true;
                         } else {
                             frame->full_range = isSampleBufferFullRange;
@@ -1240,7 +1230,7 @@
                                 newInfo.isValid = false;
                             } else {
                                 newInfo.colorSpace = sampleBufferColorSpace;
-                                newInfo.videoRange = sampleBufferRangeType;
+                                newInfo.fourCC = mediaSubType;
                                 newInfo.isValid = true;
                             }
                         }

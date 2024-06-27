@@ -47,7 +47,7 @@ typedef struct av_capture {
     pthread_mutex_t mutex;
 
     OBSAVCaptureColorSpace configuredColorSpace;
-    OBSAVCaptureVideoRange configuredVideoRange;
+    OBSAVCaptureVideoRange configuredFourCC;
 
     void *settings;
     void *source;
@@ -61,7 +61,7 @@ typedef struct av_capture {
 /// C struct for sample buffer validity checks in capture callback
 typedef struct av_capture_info {
     OBSAVCaptureColorSpace colorSpace;
-    OBSAVCaptureVideoRange videoRange;
+    FourCharCode fourCC;
     bool isValid;
 } OBSAVCaptureVideoInfo;
 

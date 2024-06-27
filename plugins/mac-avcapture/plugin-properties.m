@@ -273,6 +273,7 @@ bool properties_update_device(OBSAVCapture *capture __unused, obs_property_t *pr
 
 bool properties_update_config(OBSAVCapture *capture, obs_properties_t *properties, obs_data_t *settings)
 {
+    //todo: see if we need to handle 'migration' of old settings here (or else in OBSAVCapture)
     AVCaptureDevice *device = [AVCaptureDevice deviceWithUniqueID:[OBSAVCapture stringFromSettings:settings
                                                                                        withSetting:@"device"]];
 
