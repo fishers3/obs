@@ -46,6 +46,9 @@ typedef struct av_capture {
 
     pthread_mutex_t mutex;
 
+    OBSAVCaptureColorSpace configuredColorSpace;
+    OBSAVCaptureVideoRange configuredFourCC;
+
     void *settings;
     void *source;
     bool isFastPath;
@@ -58,7 +61,7 @@ typedef struct av_capture {
 /// C struct for sample buffer validity checks in capture callback
 typedef struct av_capture_info {
     OBSAVCaptureColorSpace colorSpace;
-    OBSAVCaptureVideoRange videoRange;
+    FourCharCode fourCC;
     bool isValid;
 } OBSAVCaptureVideoInfo;
 
@@ -70,7 +73,7 @@ typedef struct av_capture_info {
 ///
 /// Devices can be configured either via [presets](https://developer.apple.com/documentation/avfoundation/avcapturesessionpreset?language=objc) (usually 3 quality-based presets in addition to resolution based presets). The resolution defined by the preset does not necessarily switch the actual device to the same resolution, instead the device is automatically switched to the best possible resolution and the [CMSampleBuffer](https://developer.apple.com/documentation/coremedia/cmsamplebuffer?language=objc) provided via [AVCaptureVideoDataOutput](https://developer.apple.com/documentation/avfoundation/avcapturevideodataoutput?language=objc) will be resized accordingly. If necessary the actual frame will be pillar-boxed to fit into a widescreen sample buffer in an attempt to fit the content into it.
 ///
-/// Alternatively, devices can be configured manually by specifying resolution, frame-rate, color format and color space. If a device was **not** configured via a preset originally, the size of the [CMSampleBuffer](https://developer.apple.com/documentation/coremedia/cmsamplebuffer?language=objc) will be adjusted to the selected resolution.
+/// Alternatively, devices can be configured manually by specifying a particular [AVCaptureDeviceFormat](https://developer.apple.com/documentation/avfoundation/avcapturedeviceformat?language=objc) representing a specific combination of resolution, frame-rate, color format and color space supported by the device. If a device was **not** configured via a preset originally, the size of the [CMSampleBuffer](https://developer.apple.com/documentation/coremedia/cmsamplebuffer?language=objc) will be adjusted to the selected resolution.
 ///
 /// > Important: If a preset was configured before, the resolution of the last valid preset-based buffer will be retained and the frame will be fit into it with the selected resolution.
 ///
@@ -144,11 +147,6 @@ typedef struct av_capture_info {
 
 #pragma mark - OBS Settings Helpers
 
-/// Reads source dimensions from user settings and converts them into a [CMVideoDimensions](https://developer.apple.com/documentation/coremedia/cmvideodimensions?language=objc) struct for convenience when interacting with the [CoreMediaIO](https://developer.apple.com/documentation/coremediaio?language=objc) framework.
-/// - Parameter settings: Pointer to settings struct used by ``libobs``
-/// - Returns: [CMVideoDimensions](https://developer.apple.com/documentation/coremedia/cmvideodimensions?language=objc) struct with resolution from user settings
-+ (CMVideoDimensions)dimensionsFromSettings:(void *)settings;
-
 /// Reads a C-character pointer from user settings and converts it into an [NSString](https://developer.apple.com/documentation/foundation/nsstring?language=objc) instance.
 /// - Parameters:
 ///   - settings: Pointer to user settings struct used by ``libobs``
@@ -163,6 +161,11 @@ typedef struct av_capture_info {
 ///   - widthDefault: Optional fallback value to use if C-character pointer read from settings is invalid
 /// - Returns: New [NSString](https://developer.apple.com/documentation/foundation/nsstring?language=objc) instance created from user setting if setting represented a valid C character pointer.
 + (NSString *)stringFromSettings:(void *)settings withSetting:(NSString *)setting withDefault:(NSString *)defaultValue;
+
+/// Generates an NSString representing the name of the warning to display in the properties window for macOS system effects that are active on a particular `AVCaptureDevice`.
+/// - Parameter device: The [AVCaptureDevice](https://developer.apple.com/documentation/avfoundation/avcapturedevice?language=objc) to generate an effects warning string for.
+/// - Returns: `nil` if there are no effects active on the device. If effects are found, returns a new [NSString](https://developer.apple.com/documentation/foundation/nsstring?language=objc) instance containing the `libobs` key used to retrieve the appropriate localized warning string.
++ (NSString *)effectsWarningForDevice:(AVCaptureDevice *)device;
 
 #pragma mark - Format Conversion Helpers
 
@@ -234,6 +237,16 @@ typedef struct av_capture_info {
 /// - Returns: FourCC-based media subtype in big-endian format
 
 + (FourCharCode)fourCharCodeFromFormat:(OBSAVCaptureVideoFormat)format withRange:(enum video_range_type)videoRange;
+
+/// Generates a string describing an array of frame rate ranges.
+/// - Parameter ranges: [NSArray](https://developer.apple.com/documentation/foundation/nsarray?language=objc) of [AVFrameRateRange](https://developer.apple.com/documentation/avfoundation/avframeraterange?language=objc), such as might be provided by an `AVCaptureDeviceFormat` instance's [videoSupportedFrameRateRanges](https://developer.apple.com/documentation/avfoundation/avcapturedeviceformat/1387592-videosupportedframerateranges) property.
+/// - Returns: A new [NSString](https://developer.apple.com/documentation/foundation/nsstring?language=objc) instance that describes the frame rate ranges.
++ (NSString *)frameRateDescription:(NSArray<AVFrameRateRange *> *)ranges;
+
+/// Generates a general localized description of an [AVCaptureDeviceFormat](https://developer.apple.com/documentation/avfoundation/avcapturedeviceformat?language=objc) suitable for format selection in the source properties window.
+/// - Parameter format: An [AVCaptureDeviceFormat](https://developer.apple.com/documentation/avfoundation/avcapturedeviceformat?language=objc) format instance.
+/// - Returns: A new [NSString](https://developer.apple.com/documentation/foundation/nsstring?language=objc) instance containing the localized description of the format.
++ (NSString *)descriptionFromFormat:(AVCaptureDeviceFormat *)format;
 
 /// Converts a [CMFormatDescription](https://developer.apple.com/documentation/coremedia/cmformatdescription?language=objc) into a ``libobs``-based color space value
 /// - Parameter description: A [CMFormatDescription](https://developer.apple.com/documentation/coremedia/cmformatdescription?language=objc) media format descriptor
@@ -335,6 +348,50 @@ typedef struct av_capture_info {
 @end
 
 #pragma mark - Static helper functions
+
+/// Compare two `AVCaptureDeviceFormat`s for purposes of sorting in the properties window.
+static NSComparator const OBSAVCaptureDeviceFormatCompare =
+    ^NSComparisonResult(AVCaptureDeviceFormat *lhs, AVCaptureDeviceFormat *rhs) {
+        CMVideoDimensions lhsDimensions = CMVideoFormatDescriptionGetDimensions(lhs.formatDescription);
+        CMVideoDimensions rhsDimensions = CMVideoFormatDescriptionGetDimensions(rhs.formatDescription);
+        NSNumber *lhsWidth = @(lhsDimensions.width);
+        NSNumber *rhsWidth = @(rhsDimensions.width);
+        NSNumber *lhsHeight = @(lhsDimensions.height);
+        NSNumber *rhsHeight = @(rhsDimensions.height);
+        NSNumber *lhsArea = @(lhsDimensions.width * lhsDimensions.height);
+        NSNumber *rhsArea = @(rhsDimensions.width * rhsDimensions.height);
+        NSNumber *lhsMaxFrameRate = @(lhs.videoSupportedFrameRateRanges.firstObject.maxFrameRate);
+        NSNumber *rhsMaxFrameRate = @(rhs.videoSupportedFrameRateRanges.firstObject.maxFrameRate);
+        NSNumber *lhsFourCC = @(CMFormatDescriptionGetMediaSubType(lhs.formatDescription));
+        NSNumber *rhsFourCC = @(CMFormatDescriptionGetMediaSubType(rhs.formatDescription));
+        NSNumber *lhsColorSpace = @([OBSAVCapture colorspaceFromDescription:lhs.formatDescription]);
+        NSNumber *rhsColorSpace = @([OBSAVCapture colorspaceFromDescription:rhs.formatDescription]);
+
+        NSComparisonResult result;
+
+        result = [lhsWidth compare:rhsWidth];
+        if (result == NSOrderedSame) {
+            result = [lhsArea compare:rhsArea];
+            if (result == NSOrderedSame) {
+                result = [lhsHeight compare:rhsHeight];
+                if (result == NSOrderedSame) {
+                    result = [lhsMaxFrameRate compare:rhsMaxFrameRate];
+                    if (result == NSOrderedSame) {
+                        result = [lhsFourCC compare:rhsFourCC];
+                        if (result == NSOrderedSame) {
+                            result = [lhsColorSpace compare:rhsColorSpace];
+                        }
+                    }
+                }
+            }
+        }
+        if (result == NSOrderedAscending)
+            return NSOrderedDescending;
+        else if (result == NSOrderedDescending)
+            return NSOrderedAscending;
+        else
+            return result;
+    };
 
 /// Clamp an unsigned 64-bit integer value to the specified minimum and maximum values
 static inline UInt64 clamp_Uint(UInt64 value, UInt64 min, UInt64 max)
