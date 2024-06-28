@@ -410,7 +410,6 @@
 
 - (BOOL)configureSession:(NSError *__autoreleasing *)error
 {
-    //todo: see if we need to handle 'migration' from old settings here (or else in plugin-properties)
     struct media_frames_per_second fps;
     if (!obs_data_get_frames_per_second(self.captureInfo->settings, "frame_rate", &fps, NULL)) {
         [self AVCaptureLog:LOG_DEBUG withFormat:@"No valid framerate found in settings"];
@@ -427,21 +426,46 @@
     OBSAVCaptureColorSpace colorSpace;
     bool fpsSupported = false;
 
-    for (AVCaptureDeviceFormat *formatCandidate in [self.deviceInput.device.formats reverseObjectEnumerator]) {
-        if ([selectedFormatNSString isEqualToString:[OBSAVCapture descriptionFromFormat:formatCandidate]]) {
-            CMFormatDescriptionRef formatDescription = formatCandidate.formatDescription;
-            FourCharCode formatFourCC = CMFormatDescriptionGetMediaSubType(formatDescription);
-            format = formatCandidate;
-            subtype = formatFourCC;
-            colorSpace = [OBSAVCapture colorspaceFromDescription:formatDescription];
+    if (![selectedFormatNSString isEqual:@""]) {
+        for (AVCaptureDeviceFormat *formatCandidate in [self.deviceInput.device.formats reverseObjectEnumerator]) {
+            if ([selectedFormatNSString isEqualToString:[OBSAVCapture descriptionFromFormat:formatCandidate]]) {
+                CMFormatDescriptionRef formatDescription = formatCandidate.formatDescription;
+                FourCharCode formatFourCC = CMFormatDescriptionGetMediaSubType(formatDescription);
+                format = formatCandidate;
+                subtype = formatFourCC;
+                colorSpace = [OBSAVCapture colorspaceFromDescription:formatDescription];
+                break;
+            }
         }
-        if (format) {
-            break;
+    } else {
+        //try to migrate from the legacy suite of properties
+        int legacyVideoRange = (int) obs_data_get_int(self.captureInfo->settings, "video_range");
+        int legacyInputFormat = (int) obs_data_get_int(self.captureInfo->settings, "input_format");
+        int legacyColorSpace = (int) obs_data_get_int(self.captureInfo->settings, "color_space");
+        CMVideoDimensions legacyDimensions = [OBSAVCapture legacyDimensionsFromSettings:self.captureInfo->settings];
+        for (AVCaptureDeviceFormat *formatCandidate in [self.deviceInput.device.formats reverseObjectEnumerator]) {
+            CMFormatDescriptionRef formatDescription = formatCandidate.formatDescription;
+            CMVideoDimensions formatDimensions = CMVideoFormatDescriptionGetDimensions(formatDescription);
+            int formatColorSpace = [OBSAVCapture colorspaceFromDescription:formatDescription];
+            int formatInputFormat =
+                [OBSAVCapture formatFromSubtype:CMFormatDescriptionGetMediaSubType(formatDescription)];
+            int formatVideoRange = [OBSAVCapture isFullRangeFormat:formatInputFormat] ? VIDEO_RANGE_FULL
+                                                                                      : VIDEO_RANGE_PARTIAL;
+            bool foundFormat = legacyVideoRange == formatVideoRange && legacyInputFormat == formatInputFormat &&
+                               legacyColorSpace == formatColorSpace &&
+                               legacyDimensions.width == formatDimensions.width &&
+                               legacyDimensions.height == formatDimensions.height;
+            if (foundFormat) {
+                format = formatCandidate;
+                subtype = formatInputFormat;
+                colorSpace = formatColorSpace;
+                break;
+            }
         }
     }
 
     if (!format) {
-        [self AVCaptureLog:LOG_WARNING withFormat:@"Selected format '%@' not found on device", selectedFormatNSString];
+        [self AVCaptureLog:LOG_WARNING withFormat:@"Configured format not found on device"];
         return NO;
     }
 
@@ -592,6 +616,30 @@
 }
 
 #pragma mark - OBS Settings Helpers
+
++ (CMVideoDimensions)legacyDimensionsFromSettings:(void *)settings
+{
+    CMVideoDimensions zero = {0};
+
+    NSString *jsonString = [OBSAVCapture stringFromSettings:settings withSetting:@"resolution"];
+    NSDictionary *data = [NSJSONSerialization JSONObjectWithData:[jsonString dataUsingEncoding:NSUTF8StringEncoding]
+                                                         options:0
+                                                           error:nil];
+    if (data.count == 0) {
+        return zero;
+    }
+
+    NSInteger width = [[data objectForKey:@"width"] intValue];
+    NSInteger height = [[data objectForKey:@"height"] intValue];
+
+    if (!width || !height) {
+        return zero;
+    }
+
+    CMVideoDimensions dimensions = {.width = (int32_t) clamp_Uint(width, 0, UINT32_MAX),
+                                    .height = (int32_t) clamp_Uint(height, 0, UINT32_MAX)};
+    return dimensions;
+}
 
 + (NSString *)stringFromSettings:(void *)settings withSetting:(NSString *)setting
 {
