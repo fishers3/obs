@@ -155,7 +155,7 @@ void OutputTimer::RecordTimerStop()
 {
 	recordingAlreadyActive = false;
 
-	if (!isVisible() && recordingTimer->isActive() == false)
+	if (!isVisible() && recordingTimer->isActive() == true)
 		return;
 
 	if (recordingTimer->isActive())
